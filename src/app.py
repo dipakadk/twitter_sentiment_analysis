@@ -1,61 +1,85 @@
-from flask import Flask, render_template, request
-import pickle
+import os
 import re
-import contractions
+import pickle
+from flask import Flask, jsonify, request
+
+# Import necessary libraries
 import nltk
-
-# Download the 'punkt' corpus
-corpus=nltk.download('punkt')
-# Download the 'stopwords' corpus
-nltk.download('stopwords')
-
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
-from sklearn.feature_extraction.text import TfidfVectorizer
+import contractions
 
-tfidf = TfidfVectorizer(max_features=3050)
-lemmatizer = WordNetLemmatizer()
+# Initialize Flask app
 app = Flask(__name__)
 
-model = pickle.load(open('sentiment_model.pkl', 'rb'))
-vectorizer = pickle.load(open('vectorizers.pkl', 'rb'))
+# Define file paths for model loading
+base_dir = os.path.dirname(os.path.dirname(__file__))
+model_dir = os.path.join(base_dir, 'models')
 
-# large_corpus=[corpus]
-# tfidf.fit_transform(large_corpus)
+# Load the vocabulary and sentiment analysis model using pickle
+with open(os.path.join(model_dir, 'vectorizers.pkl'), 'rb') as vocab_file:
+    vocab = pickle.load(vocab_file)
 
-#smallcorp='Ah! Now I have done Philosophy,\nI have finished Law and Medicine,\nAnd sadly even Theology:\nTaken fierce pains, from end to end.\nNow here I am, a fool for sure!\nNo wiser than I was before:'
+with open(os.path.join(model_dir, 'sentiment_model.pkl'), 'rb') as model_file:
+    model = pickle.load(model_file)
 
+# Initialize Lemmatizer
+lemmatizer = WordNetLemmatizer()
 
-def text_cleaner_without_stopwords(text):
-    new_text = re.sub(r"'s\b", " is", text)
-    new_text = re.sub("#", "", new_text)
-    new_text = re.sub("@[A-Za-z0-9]+", "", new_text)
-    new_text = re.sub(r"http\S+", "", new_text)
-    new_text = contractions.fix(new_text)
-    new_text = re.sub(r"[^a-zA-Z]", " ", new_text)
-    new_text = new_text.lower().strip()
-    new_text = new_text.replace('`', "'")
+# Function to clean and preprocess text (remove stopwords, lemmatize)
+def clean_tweet(tweet, stop_words=False):
+    new_tweet = re.sub(r"'s\b", " is", tweet)
+    new_tweet = re.sub("#", "", new_tweet)
+    new_tweet = re.sub("@[A-Za-z0-9]+", "", new_tweet)
+    new_tweet = re.sub(r"http\S+", "", new_tweet)
+    new_tweet = contractions.fix(new_tweet)
+    new_tweet = re.sub(r"[^a-zA-Z]", " ", new_tweet)
+    new_tweet = new_tweet.lower().strip()
+    new_tweet = new_tweet.replace('`', "'")
 
-    cleaned_text = ''
-    for token in new_text.split():
-        cleaned_text = cleaned_text + lemmatizer.lemmatize(token) + ' '
+    # Download NLTK data
+    corpus = nltk.download('punkt')
+    nltk.download('stopwords')
 
-    return " ".join(cleaned_text)
+    if stop_words == True:
+        # write logic to remove stop words
+        pass
 
+    # Tokenize the tweet and apply lemmatization
+    words = word_tokenize(new_tweet)
+    cleaned_tweet = ' '.join(lemmatizer.lemmatize(word) for word in words)
+
+    return cleaned_tweet
 
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    response = "twitter sentiment analysis..."
+    return jsonify({"response": response})
 
-@app.route('/upload', methods=['POST'])
-def upload():
+
+@app.route('/predict', methods=['POST'])
+def predict():
     if request.method == 'POST':
-        input_text = request.form.get('text')
-        transformed_text = text_cleaner_without_stopwords(input_text)
-        vector_input = tfidf.fit_transform([transformed_text])
+        input_data = request.get_json()
+        
+        # Assuming the JSON data contains a key called 'tweet'
+        input_tweet = input_data.get('tweet')
+
+        if input_tweet is None:
+            return jsonify({'error': 'Missing or invalid JSON data'}), 400
+
+        # Preprocess the input tweet
+        transformed_tweet = clean_tweet(input_tweet)
+
+        # Vectorize the tweet using the initialized TF-IDF vectorizer
+        vector_input = vocab.transform([transformed_tweet])
+
+        # Make a prediction using the loaded sentiment analysis model
         result = model.predict(vector_input)[0]
 
-        prediction = ""
+        # Map the result to sentiment classes
         if result == 0:
             prediction = 'Negative'
         elif result == 1:
@@ -63,7 +87,9 @@ def upload():
         else:
             prediction = 'Positive'
 
-        return f'Predicted class: {prediction}'
+        return jsonify({'prediction': prediction})
+
+
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=8000, debug=True)
